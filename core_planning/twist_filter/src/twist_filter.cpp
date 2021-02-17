@@ -354,10 +354,20 @@ void TwistFilter::TwistCmdCallback(
   health_checker_.NODE_ACTIVATE();
   checkTwist(*msg);
   geometry_msgs::TwistStamped ts;
+  ROS_DEBUG_STREAM("Twist speed before speed: " << msg->twist.linear.x);
+
   ts = twist_filter::longitudinalLimitTwist(*msg, longitudinal_velocity_limit_);
+  ROS_DEBUG_STREAM("Twist speed after long speed limit: " << ts.twist.linear.x);
+  
   ts = _lon_accel_limiter.longitudinalAccelLimitTwist(ts);
+  ROS_DEBUG_STREAM("Twist speed after long accel limit: " << ts.twist.linear.x);
+
   ts = lateralLimitTwist(ts);
+  ROS_DEBUG_STREAM("Twist speed after latel speed limit: " << ts.twist.linear.x);
+
   ts = smoothTwist(ts);
+  ROS_DEBUG_STREAM("Twist speed after smooth speed limit: " << ts.twist.linear.x);
+
   twist_pub_.publish(ts);
   publishLateralResultsWithTwist(ts);
   updatePrevTwist(ts);
@@ -369,10 +379,26 @@ void TwistFilter::CtrlCmdCallback(
   health_checker_.NODE_ACTIVATE();
   checkCtrl(*msg);
   autoware_msgs::ControlCommandStamped ccs;
+  ROS_DEBUG_STREAM("Command speed before speed: " << msg->cmd.linear_velocity);
+  ROS_DEBUG_STREAM("Command accel before long speed limit: " << msg->cmd.linear_acceleration);
+
   ccs = twist_filter::longitudinalLimitCtrl(*msg, longitudinal_velocity_limit_);
+  ROS_DEBUG_STREAM("Command speed after long speed limit: " << ccs.cmd.linear_velocity);
+  ROS_DEBUG_STREAM("Command accel after long speed limit: " << ccs.cmd.linear_acceleration);
+  
   ccs = _lon_accel_limiter.longitudinalAccelLimitCtrl(ccs);
+
+  ROS_DEBUG_STREAM("Command speed after long accel limit: " << ccs.cmd.linear_velocity);
+  ROS_DEBUG_STREAM("Command accel after long accel limit: " << ccs.cmd.linear_acceleration);
+  ROS_DEBUG_STREAM("Command steering angle before lateral limit: " << ccs.cmd.steering_angle);
+
   ccs = lateralLimitCtrl(ccs);
+  ROS_DEBUG_STREAM("Command steering angle after lateral limit: " << ccs.cmd.steering_angle);
+
   ccs = smoothCtrl(ccs);
+  ROS_DEBUG_STREAM("Command speed after long smooth : " << ccs.cmd.linear_velocity);
+  ROS_DEBUG_STREAM("Command steering angle after smooth : " << ccs.cmd.steering_angle);
+
   ctrl_pub_.publish(ccs);
   publishLateralResultsWithCtrl(ccs);
   updatePrevCtrl(ccs);

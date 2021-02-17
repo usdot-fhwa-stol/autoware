@@ -153,6 +153,10 @@ void PurePursuitNode::publishTwistStamped(
   ts.header.stamp = ros::Time::now();
   ts.twist.linear.x = can_get_curvature ? computeCommandVelocity() : 0;
   ts.twist.angular.z = can_get_curvature ? kappa * ts.twist.linear.x : 0;
+  ROS_DEBUG_STREAM("publish twist:time now" << ros::Time::now().sec);
+  ROS_DEBUG_STREAM("publish twist:Pure pursuit twist speed" << ts.twist.linear.x);
+  ROS_DEBUG_STREAM("publish twist:Pure pursuit twist speed" << ts.twist.angular.z);
+
   pub1_.publish(ts);
 }
 
@@ -170,6 +174,9 @@ void PurePursuitNode::publishControlCommandStamped(
   ccs.cmd.linear_acceleration = can_get_curvature ? computeCommandAccel() : 0;
   ccs.cmd.steering_angle =
     can_get_curvature ? convertCurvatureToSteeringAngle(wheel_base_, kappa) : 0;
+  
+  ROS_DEBUG_STREAM("publish:time now" << ros::Time::now().sec);
+  ROS_DEBUG_STREAM("publish:Pure pursuit command speed" << ccs.cmd.linear_velocity);
 
   pub2_.publish(ccs);
 }
@@ -308,6 +315,10 @@ void PurePursuitNode::callbackFromWayPoints(
   {
     command_linear_velocity_ =
       (!msg->waypoints.empty()) ? pp_.getCurrentWaypoints().at(next_waypoint_number).twist.twist.linear.x : 0;
+    ROS_DEBUG_STREAM("time now" << ros::Time::now().sec);
+    ROS_DEBUG_STREAM("Pure pursuit command speed" << command_linear_velocity_);
+    auto pos_to_debug = pp_.getCurrentWaypoints().at(next_waypoint_number).pose.pose.position;
+    ROS_DEBUG_STREAM("This speed's point with id:" << next_waypoint_number << ", x:" <<pos_to_debug.x << ", y:" << pos_to_debug.y);
   }
   else
   {
