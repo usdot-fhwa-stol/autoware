@@ -92,54 +92,54 @@ void PurePursuitNode::run()
 {
   ROS_INFO_STREAM("pure pursuit start");
   ros::Rate loop_rate(LOOP_RATE_);
-  while (ros::ok())
-  {
-    ros::spinOnce();
-    if (!is_pose_set_ || !is_waypoint_set_ || !is_velocity_set_)
-    {
-      ROS_WARN("Necessary topics are not subscribed yet ... ");
-      loop_rate.sleep();
-      continue;
+
+  ros::Timer command_pub_timer = nh_.createTimer( // Create a ros timer to publish commands at the expected loop rate
+    loop_rate.expectedCycleTime(),
+    
+    [this](const auto&) { 
+
+      if (!is_pose_set_ || !is_waypoint_set_ || !is_velocity_set_) // One time check on desired input data
+      {
+        ROS_WARN("Necessary topics are not subscribed yet ... ");
+        return;
+      }
+
+      pp_.setLookaheadDistance(this->computeLookaheadDistance());
+      pp_.setMinimumLookaheadDistance(minimum_lookahead_distance_);
+
+      double kappa = 0;
+      bool can_get_curvature = pp_.canGetCurvature(&kappa);
+
+      this->publishTwistStamped(can_get_curvature, kappa);
+      this->publishControlCommandStamped(can_get_curvature, kappa);
+      health_checker_ptr_->NODE_ACTIVATE();
+      health_checker_ptr_->CHECK_RATE("topic_rate_vehicle_cmd_slow", 8, 5, 1,
+        "topic vehicle_cmd publish rate slow.");
+      // for visualization with Rviz
+      pub11_.publish(displayNextWaypoint(pp_.getPoseOfNextWaypoint()));
+      pub13_.publish(displaySearchRadius(
+        pp_.getCurrentPose().position, pp_.getLookaheadDistance()));
+      pub12_.publish(displayNextTarget(pp_.getPoseOfNextTarget()));
+      pub15_.publish(displayTrajectoryCircle(
+          waypoint_follower::generateTrajectoryCircle(
+            pp_.getPoseOfNextTarget(), pp_.getCurrentPose())));
+      if (add_virtual_end_waypoints_)
+      {
+        pub18_.publish(
+          displayExpandWaypoints(pp_.getCurrentWaypoints(), expand_size_));
+      }
+      std_msgs::Float32 angular_gravity_msg;
+      angular_gravity_msg.data =
+        this->computeAngularGravity(this->computeCommandVelocity(), kappa);
+      pub16_.publish(angular_gravity_msg);
+
+      this->publishDeviationCurrentPosition(
+        pp_.getCurrentPose().position, pp_.getCurrentWaypoints());
+
     }
+  );
 
-    pp_.setLookaheadDistance(computeLookaheadDistance());
-    pp_.setMinimumLookaheadDistance(minimum_lookahead_distance_);
-
-    double kappa = 0;
-    bool can_get_curvature = pp_.canGetCurvature(&kappa);
-
-    publishTwistStamped(can_get_curvature, kappa);
-    publishControlCommandStamped(can_get_curvature, kappa);
-    health_checker_ptr_->NODE_ACTIVATE();
-    health_checker_ptr_->CHECK_RATE("topic_rate_vehicle_cmd_slow", 8, 5, 1,
-      "topic vehicle_cmd publish rate slow.");
-    // for visualization with Rviz
-    pub11_.publish(displayNextWaypoint(pp_.getPoseOfNextWaypoint()));
-    pub13_.publish(displaySearchRadius(
-      pp_.getCurrentPose().position, pp_.getLookaheadDistance()));
-    pub12_.publish(displayNextTarget(pp_.getPoseOfNextTarget()));
-    pub15_.publish(displayTrajectoryCircle(
-        waypoint_follower::generateTrajectoryCircle(
-          pp_.getPoseOfNextTarget(), pp_.getCurrentPose())));
-    if (add_virtual_end_waypoints_)
-    {
-      pub18_.publish(
-        displayExpandWaypoints(pp_.getCurrentWaypoints(), expand_size_));
-    }
-    std_msgs::Float32 angular_gravity_msg;
-    angular_gravity_msg.data =
-      computeAngularGravity(computeCommandVelocity(), kappa);
-    pub16_.publish(angular_gravity_msg);
-
-    publishDeviationCurrentPosition(
-      pp_.getCurrentPose().position, pp_.getCurrentWaypoints());
-
-    is_pose_set_ = false;
-    is_velocity_set_ = false;
-    is_waypoint_set_ = false;
-
-    loop_rate.sleep();
-  }
+  ros::spin();
 }
 
 void PurePursuitNode::publishTwistStamped(

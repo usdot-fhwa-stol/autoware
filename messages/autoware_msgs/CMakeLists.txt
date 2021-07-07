@@ -53,7 +53,7 @@ add_message_files(
             VehicleStatus.msg
             TrafficLightResult.msg
             TrafficLightResultArray.msg
-
+            Gear.msg
             AccelCmd.msg
             AdjustXY.msg
             BrakeCmd.msg

@@ -11,7 +11,9 @@ find_package(catkin REQUIRED COMPONENTS
         cv_bridge
         image_transport
         autoware_msgs
-        tf
+        tf2
+        tf2_ros
+        geometry_msgs
         )
 
 find_package(OpenCV REQUIRED)
@@ -24,7 +26,9 @@ catkin_package(
         cv_bridge
         image_transport
         autoware_msgs
-        tf
+        tf2
+        tf2_ros
+        geometry_msgs
 )
 
 include_directories(

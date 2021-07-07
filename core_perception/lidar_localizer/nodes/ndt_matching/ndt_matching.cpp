@@ -1679,18 +1679,13 @@ int main(int argc, char** argv)
   //  ros::Subscriber map_sub = nh.subscribe("points_map", 1, map_callback);
   ros::Subscriber initialpose_sub = nh.subscribe("initialpose", _queue_size, initialpose_callback);
   ros::Subscriber points_sub = nh.subscribe("filtered_points", _queue_size, points_callback);
-  ros::Subscriber odom_sub = nh.subscribe("/vehicle/odom", _queue_size, odom_callback);
-  ros::Subscriber imu_sub = nh.subscribe(_imu_topic.c_str(), _queue_size, imu_callback);
+  ros::Subscriber odom_sub = nh.subscribe("/vehicle/odom", _queue_size * 10, odom_callback);
+  ros::Subscriber imu_sub = nh.subscribe(_imu_topic.c_str(), _queue_size * 10, imu_callback);
 
   pthread_t thread;
   pthread_create(&thread, NULL, thread_func, NULL);
 
-  ros::Rate r(10);
-  while (nh.ok())
-  {
-    ros::spinOnce();
-    r.sleep();
-  }
+  ros::spin();
 
   return 0;
 }

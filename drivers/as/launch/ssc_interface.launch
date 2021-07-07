@@ -4,6 +4,7 @@
 	<arg name="use_adaptive_gear_ratio" default="true"/>
 	<arg name="command_timeout" default="1000"/>
 	<arg name="loop_rate" default="30.0"/>
+	<arg name="status_pub_rate" default="30.0" doc="The default publication rate in hz of the vehicle status information. If no new messages are available then a timestep will be skipped"/>
 	<arg name="wheel_base" default="2.79"/>
 	<arg name="tire_radius" default="0.39"/>
 	<arg name="acceleration_limit" default="3.0"/>

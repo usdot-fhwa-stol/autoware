@@ -16,8 +16,11 @@
  */
 #include <ros/ros.h>
 #include <sensor_msgs/CameraInfo.h>
-#include <tf/transform_broadcaster.h>
-#include <tf/transform_datatypes.h>
+#include <tf2_ros/static_transform_broadcaster.h>
+#include <tf2/LinearMath/Transform.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Vector3.h>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <sensor_msgs/Image.h>
@@ -48,11 +51,11 @@ static autoware_msgs::ProjectionMatrix extrinsic_matrix_msg_;
 
 void tfRegistration(const cv::Mat &camExtMat, const ros::Time &timeStamp)
 {
-  tf::Matrix3x3 rotation_mat;
+  tf2::Matrix3x3 rotation_mat;
   double roll = 0, pitch = 0, yaw = 0;
-  tf::Quaternion quaternion;
-  tf::Transform transform;
-  static tf::TransformBroadcaster broadcaster;
+  tf2::Quaternion quaternion;
+  tf2::Transform transform;
+  static tf2_ros::StaticTransformBroadcaster broadcaster;
 
   rotation_mat.setValue(camExtMat.at<double>(0, 0), camExtMat.at<double>(0, 1), camExtMat.at<double>(0, 2),
                         camExtMat.at<double>(1, 0), camExtMat.at<double>(1, 1), camExtMat.at<double>(1, 2),
@@ -63,11 +66,25 @@ void tfRegistration(const cv::Mat &camExtMat, const ros::Time &timeStamp)
   quaternion.setRPY(roll, pitch, yaw);
 
   transform.setOrigin(
-    tf::Vector3(camExtMat.at<double>(0, 3), camExtMat.at<double>(1, 3), camExtMat.at<double>(2, 3)));
+    tf2::Vector3(camExtMat.at<double>(0, 3), camExtMat.at<double>(1, 3), camExtMat.at<double>(2, 3)));
 
   transform.setRotation(quaternion);
 
-  broadcaster.sendTransform(tf::StampedTransform(transform, timeStamp, target_frame_, camera_frame_));
+  geometry_msgs::TransformStamped msg;
+  msg.transform.translation.x = transform.getOrigin().x();
+  msg.transform.translation.y = transform.getOrigin().y();
+  msg.transform.translation.z = transform.getOrigin().z();
+  
+  msg.transform.rotation.x = transform.getRotation().x();
+  msg.transform.rotation.y = transform.getRotation().y();
+  msg.transform.rotation.z = transform.getRotation().z();
+  msg.transform.rotation.w = transform.getRotation().w();
+
+  msg.header.stamp = timeStamp;
+  msg.header.frame_id = target_frame_;
+  msg.child_frame_id = camera_frame_;
+
+  broadcaster.sendTransform(msg);
 }
 
 void projectionMatrix_sender(const cv::Mat &projMat, const ros::Time &timeStamp)
@@ -143,10 +160,13 @@ static void image_raw_cb(const sensor_msgs::Image &image_msg)
   timeStampOfImage.sec = image_msg.header.stamp.sec;
   timeStampOfImage.nsec = image_msg.header.stamp.nsec;
 
+  static bool published_tf = false; // Flag to trigger one time tf publication since the tf does not change at runtime
+
   /* create TF between velodyne and camera with time stamp of /image_raw */
-  if (isRegister_tf)
+  if (isRegister_tf && !published_tf)
   {
     tfRegistration(CameraExtrinsicMat, timeStampOfImage);
+    published_tf = true;
   }
 
   if (isPublish_cameraInfo)

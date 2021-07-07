@@ -17,12 +17,14 @@
 #include "ssc_interface.h"
 #include <ros_observer/lib_ros_observer.h>
 
-SSCInterface::SSCInterface() : nh_(), private_nh_("~"), engage_(false), command_initialized_(false)
+SSCInterface::SSCInterface() : nh_(), private_nh_("~"), engage_(false), command_initialized_(false), status_pub_rate_(30.0)
 {
   // setup parameters
+  double status_pub_rate = 30.0;
   private_nh_.param<bool>("use_adaptive_gear_ratio", use_adaptive_gear_ratio_, true);
   private_nh_.param<int>("command_timeout", command_timeout_, 1000);
   private_nh_.param<double>("loop_rate", loop_rate_, 30.0);
+  private_nh_.param<double>("status_pub_rate", status_pub_rate, 30.0);
   private_nh_.param<double>("wheel_base", wheel_base_, 2.79);
   private_nh_.param<double>("tire_radius", tire_radius_, 0.39);
   private_nh_.param<double>("ssc_gear_ratio", ssc_gear_ratio_, 16.135);
@@ -34,6 +36,7 @@ SSCInterface::SSCInterface() : nh_(), private_nh_("~"), engage_(false), command_
   private_nh_.param<double>("agr_coef_c", agr_coef_c_, 0.042);
 
   rate_ = new ros::Rate(loop_rate_);
+  status_pub_rate_ = ros::Rate(status_pub_rate);
 
   // subscribers from CARMA
   guidance_state_sub_ = nh_.subscribe("/state", 1, &SSCInterface::callbackFromGuidanceState, this);
@@ -44,16 +47,29 @@ SSCInterface::SSCInterface() : nh_(), private_nh_("~"), engage_(false), command_
 
   // subscribers from SSC
   module_states_sub_ = nh_.subscribe("as/module_states", 1, &SSCInterface::callbackFromSSCModuleStates, this);
+
+  // Filter for vehicle twist report
+  velocity_accel_sub_ =
+      new message_filters::Subscriber<automotive_platform_msgs::VelocityAccelCov>(nh_, "as/velocity_accel_cov", 10);
   curvature_feedback_sub_ =
       new message_filters::Subscriber<automotive_platform_msgs::CurvatureFeedback>(nh_, "as/curvature_feedback", 10);
+  
+  steering_wheel_sub_ =
+      new message_filters::Subscriber<automotive_platform_msgs::SteeringFeedback>(nh_, "as/steering_feedback", 10);
+
+  ssc_twist_sync_ = new message_filters::Synchronizer<SSCTwistSyncPolicy>(
+      SSCTwistSyncPolicy(10), *velocity_accel_sub_, *curvature_feedback_sub_, *steering_wheel_sub_);
+
+  ssc_twist_sync_->registerCallback(
+      boost::bind(&SSCInterface::callbackForTwistUpdate, this, _1, _2, _3));
+
+  // Filter for vehicle status report
   throttle_feedback_sub_ =
       new message_filters::Subscriber<automotive_platform_msgs::ThrottleFeedback>(nh_, "as/throttle_feedback", 10);
   brake_feedback_sub_ =
       new message_filters::Subscriber<automotive_platform_msgs::BrakeFeedback>(nh_, "as/brake_feedback", 10);
   gear_feedback_sub_ =
       new message_filters::Subscriber<automotive_platform_msgs::GearFeedback>(nh_, "as/gear_feedback", 10);
-  velocity_accel_sub_ =
-      new message_filters::Subscriber<automotive_platform_msgs::VelocityAccelCov>(nh_, "as/velocity_accel_cov", 10);
   steering_wheel_sub_ =
       new message_filters::Subscriber<automotive_platform_msgs::SteeringFeedback>(nh_, "as/steering_feedback", 10);
   ssc_feedbacks_sync_ = new message_filters::Synchronizer<SSCFeedbacksSyncPolicy>(
@@ -83,21 +99,49 @@ void SSCInterface::run()
   ShmVitalMonitor shm_ROvmon("RosObserver", loop_rate_);
   ShmVitalMonitor shm_HAvmon("HealthAggregator", loop_rate_);
 
-  while (ros::ok())
-  {
-    ros::spinOnce();
-
-    shm_ASvmon.run();
-
-    if (shm_ROvmon.is_error_detected() || shm_HAvmon.is_error_detected()){
-      ROS_ERROR("Emergency stop by error detection of emergency module");
-      vehicle_cmd_.emergency = 1;
-    }
-
-    publishCommand();
-
-    rate_->sleep();
+  if (rate_ == nullptr) {
+    ROS_ERROR_STREAM("Rate is null cannot run ssc_interface");
+    return;
   }
+
+  ros::Timer command_pub_timer = nh_.createTimer( // Create a ros timer to publish commands at the ssc expected loop rate
+    rate_->expectedCycleTime(),
+    
+    [this, &shm_ASvmon, &shm_ROvmon, &shm_HAvmon](const auto&) { 
+      
+      shm_ASvmon.run(); // Check system health
+
+      if (shm_ROvmon.is_error_detected() || shm_HAvmon.is_error_detected()){
+        ROS_ERROR("Emergency stop by error detection of emergency module");
+        vehicle_cmd_.emergency = 1;
+      }
+
+      this->publishCommand();  // Publish command
+    }
+  );
+
+  ros::Timer status_pub_timer = nh_.createTimer( // Create a ros timer to publish commands at the ssc expected loop rate
+    status_pub_rate_.expectedCycleTime(),
+    
+    [this](const auto&) { 
+      this->publishVehicleStatus();  // Publish command
+    }
+  );
+
+  ros::spin();
+
+}
+
+void SSCInterface::publishVehicleStatus() {
+  if (have_vehicle_status_) {
+    vehicle_status_pub_.publish(current_status_msg_);
+    have_vehicle_status_ = false; // Reset the status flag to ensure we only publish new messages
+  }
+  if (have_twist_) {
+    current_twist_pub_.publish(current_twist_msg_);
+    have_twist_ = false; // Reset the status flag to ensure we only publish new messages
+  }
+  
 }
 
 void SSCInterface::callbackFromGuidanceState(const cav_msgs::GuidanceStateConstPtr& msg)
@@ -132,6 +176,27 @@ void SSCInterface::callbackFromSSCModuleStates(const automotive_navigation_msgs:
   }
 }
 
+
+void SSCInterface::callbackForTwistUpdate(const automotive_platform_msgs::VelocityAccelCovConstPtr& msg_velocity, 
+                                          const automotive_platform_msgs::CurvatureFeedbackConstPtr& msg_curvature,
+                                          const automotive_platform_msgs::SteeringFeedbackConstPtr& msg_steering_wheel)
+{
+
+  // current steering curvature
+  double curvature = !use_adaptive_gear_ratio_ ?
+                         (msg_curvature->curvature) :
+                         std::tan(msg_steering_wheel->steering_wheel_angle/ adaptive_gear_ratio_) / wheel_base_;
+
+  geometry_msgs::TwistStamped twist;
+  twist.header.frame_id = BASE_FRAME_ID;
+  twist.header.stamp = msg_velocity->header.stamp;
+  twist.twist.linear.x = msg_velocity->velocity;               // [m/s]
+  twist.twist.angular.z = curvature * msg_velocity->velocity;  // [rad/s]
+  current_twist_msg_ = twist;
+
+  have_twist_ = true;
+}
+
 void SSCInterface::callbackFromSSCFeedbacks(const automotive_platform_msgs::VelocityAccelCovConstPtr& msg_velocity,
                                             const automotive_platform_msgs::CurvatureFeedbackConstPtr& msg_curvature,
                                             const automotive_platform_msgs::ThrottleFeedbackConstPtr& msg_throttle,
@@ -150,14 +215,6 @@ void SSCInterface::callbackFromSSCFeedbacks(const automotive_platform_msgs::Velo
 
   // Set current_velocity_ variable [m/s]
   current_velocity_ = msg_velocity->velocity;
-
-  // as_current_velocity (geometry_msgs::TwistStamped)
-  geometry_msgs::TwistStamped twist;
-  twist.header.frame_id = BASE_FRAME_ID;
-  twist.header.stamp = stamp;
-  twist.twist.linear.x = msg_velocity->velocity;               // [m/s]
-  twist.twist.angular.z = curvature * msg_velocity->velocity;  // [rad/s]
-  current_twist_pub_.publish(twist);
 
   // vehicle_status (autoware_msgs::VehicleStatus)
   autoware_msgs::VehicleStatus vehicle_status;
@@ -205,15 +262,15 @@ void SSCInterface::callbackFromSSCFeedbacks(const automotive_platform_msgs::Velo
   // vehicle_status.lamp
   // vehicle_status.light
 
-  vehicle_status_pub_.publish(vehicle_status);
+  current_status_msg_ = vehicle_status;
+  have_vehicle_status_ = true; // Set vehicle status message flag to true
 }
 
 void SSCInterface::publishCommand()
 {
-  if (!command_initialized_)
-  {
-    return;
-  }
+  // 
+  // This method will publish 0 commands until the vehicle_cmd has actually been populated with non-zeros
+  // When the vehicle_cmd_ becomes populated it will start to forward that instead
 
   ros::Time stamp = ros::Time::now();
 
@@ -273,7 +330,7 @@ void SSCInterface::publishCommand()
 
   // Override desired speed to ZERO by emergency/timeout
   bool emergency = (vehicle_cmd_.emergency == 1);
-  bool timeouted = (((ros::Time::now() - command_time_).toSec() * 1000) > command_timeout_);
+  bool timeouted = command_initialized_ && (((ros::Time::now() - command_time_).toSec() * 1000) > command_timeout_);
 
   if (emergency || timeouted)
   {
