@@ -77,6 +77,7 @@ add_library( lanelet2_extension_lib
   lib/utilities.cpp
   lib/visualization.cpp
   lib/CarmaUSTrafficRules.cpp
+  lib/CarmaTrafficLight
   lib/PassingControlLine.cpp
   lib/StopRule.cpp
   lib/DigitalSpeedLimit.cpp
